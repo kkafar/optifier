@@ -20,4 +20,6 @@ include = [
 proc_macro = true
 
 [dependencies]
+syn = ">= 2.0.13"
+quote = ">= 1.0.26"
 
