@@ -16,5 +16,8 @@ include = [
   "Cargo.toml"
 ]
 
+[lib]
+proc_macro = true
+
 [dependencies]
 
