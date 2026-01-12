@@ -11,10 +11,7 @@ Rust macros for deriving optional types
 keywords = ["macro", "derive", "macros"]
 categories = ["rust-patterns"]
 license = "MIT OR Apache-2.0"
-include = [
-  "src/*",
-  "Cargo.toml"
-]
+include = ["src/*", "Cargo.toml"]
 
 [lib]
 proc_macro = true
@@ -22,5 +19,4 @@ proc_macro = true
 [dependencies]
 syn = ">= 2.0.13"
 quote = ">= 1.0.26"
-proc-macro2 = "1.0.56"
-
+proc-macro2 = "1.0.105"
