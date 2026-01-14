@@ -6,7 +6,8 @@
 //!
 //! Example:
 //! ```ignore
-//! #[derive(Partial)]
+//! #[optifier::partial_derive(Debug, Clone)]
+//! #[derive(optifier::Partial)]
 //! pub struct Foo {
 //!     a: i32,
 //!     b: Option<String>,
@@ -15,20 +16,24 @@
 //! ```
 //! expands to:
 //! ```ignore
+//! #[derive(Debug, Clone)]
 //! pub struct FooPartial {
 //!     a: Option<i32>,
 //!     b: Option<String>, // stays as-is
 //!     pub c: Option<Vec<u8>>,
 //! }
 //! ```
+//!
+//! The `#[optifier::partial_derive(...)]` attribute controls which traits are derived for the
+//! generated `*Partial` type. It accepts a comma-separated list of trait paths.
 
 extern crate proc_macro;
 
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    parse_macro_input, Data, DeriveInput, FieldsNamed, Generics, Ident, ImplGenerics, Path,
-    PathArguments, Type, TypeGenerics, TypePath, Visibility, WhereClause,
+    Data, DeriveInput, FieldsNamed, Generics, Ident, ImplGenerics, Path, PathArguments, Type,
+    TypeGenerics, TypePath, Visibility, WhereClause, parse_macro_input,
 };
 
 /// Derive macro to generate a `*Partial` variant of a struct with all fields wrapped in `Option`.
@@ -56,7 +61,7 @@ pub fn derive_partial(item: TokenStream) -> TokenStream {
     let orig_vis: Visibility = input.vis.clone();
     let orig_ident: Ident = input.ident.clone();
     let partial_ident = format_ident!("{}Partial", orig_ident);
-    let maybe_derive_attr = deduce_derive_attr(&input);
+    let maybe_derive_attr = collect_partial_derives(&input);
 
     let Data::Struct(input_struct) = input.data else {
         panic!("Optifier supports only struct types");
@@ -81,7 +86,7 @@ pub fn derive_partial(item: TokenStream) -> TokenStream {
         fields,
         &generics,
         where_clause,
-        Some(maybe_derive_attr),
+        maybe_derive_attr,
     );
 
     let merge_function_impl_block = construct_merge_impl_block(
@@ -100,24 +105,46 @@ pub fn derive_partial(item: TokenStream) -> TokenStream {
     TokenStream::from(generated_code)
 }
 
-fn deduce_derive_attr(input: &syn::DeriveInput) -> proc_macro2::TokenStream {
+/// Attribute macro to configure derives for the generated `*Partial` type.
+///
+/// Usage:
+/// ```ignore
+/// #[optifier::partial_derive(Debug, Clone)]
+/// #[derive(optifier::Partial)]
+/// struct Foo { /* ... */ }
+/// ```
+///
+/// This will cause the generated `FooPartial` to have:
+/// ```ignore
+/// #[derive(Debug, Clone)]
+/// struct FooPartial { /* ... */ }
+/// ```
+#[proc_macro_attribute]
+pub fn partial_derive(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    // This attribute is intentionally a no-op at expansion time.
+    // The `Partial` derive macro will read the attribute arguments
+    // from the original item via `collect_partial_derives`.
+    item
+}
+
+fn collect_partial_derives(input: &syn::DeriveInput) -> proc_macro2::TokenStream {
     let mut derives: Vec<proc_macro2::TokenStream> = Vec::new();
 
+    // Look for: #[optifier::partial_derive(Debug, Clone, ...)]
     for attr in &input.attrs {
-        if attr.path().is_ident("derive") {
-            let _ = attr.parse_nested_meta(|meta| {
-                if meta.path.is_ident("Debug") {
-                    derives.push(quote! { Debug });
-                }
-                if meta.path.is_ident("Clone") {
-                    derives.push(quote! { Clone });
-                }
-                Ok(())
-            });
+        if !attr.path().is_ident("partial_derive") {
+            continue;
         }
+
+        let _ = attr.parse_nested_meta(|meta| {
+            let path = &meta.path;
+            derives.push(quote! { #path });
+            Ok(())
+        });
     }
 
     if derives.is_empty() {
+        // No #[partial_derive(...)] found -> no derives for the partial type
         quote! {}
     } else {
         quote! { #[derive( #(#derives),* )] }
@@ -151,7 +178,7 @@ fn construct_partial_struct(
     fields_named: &FieldsNamed,
     generics: &Generics,
     where_clause: Option<&WhereClause>,
-    maybe_derive_attrs: Option<proc_macro2::TokenStream>,
+    derive_attrs: proc_macro2::TokenStream,
 ) -> proc_macro2::TokenStream {
     let partial_fields = fields_named.named.iter().map(|f| {
         let f_vis = &f.vis;
@@ -172,7 +199,7 @@ fn construct_partial_struct(
     });
 
     let partial_struct_def = quote! {
-        #maybe_derive_attrs
+        #derive_attrs
         #type_vis struct #type_ident #generics #where_clause {
             #(#partial_fields),*
         }
