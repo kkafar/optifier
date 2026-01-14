@@ -27,8 +27,8 @@ extern crate proc_macro;
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    parse_macro_input, Data, DeriveInput, FieldsNamed, Ident, ImplGenerics, Path, PathArguments,
-    Type, TypeGenerics, TypePath, Visibility, WhereClause,
+    parse_macro_input, Data, DeriveInput, FieldsNamed, Generics, Ident, ImplGenerics, Path,
+    PathArguments, Type, TypeGenerics, TypePath, Visibility, WhereClause,
 };
 
 /// Derive macro to generate a `*Partial` variant of a struct with all fields wrapped in `Option`.
@@ -75,30 +75,14 @@ pub fn derive_partial(item: TokenStream) -> TokenStream {
         panic!("Optifier supports only named fields");
     };
 
-    let partial_fields = fields.named.iter().map(|f| {
-        let f_vis = &f.vis;
-        let f_ident = f
-            .ident
-            .as_ref()
-            .expect("Optifier: Named field must have ident");
-        let f_ty = &f.ty;
-        if is_option_type(f_ty) {
-            quote! {
-                #f_vis #f_ident: #f_ty
-            }
-        } else {
-            quote! {
-                #f_vis #f_ident: std::option::Option<#f_ty>
-            }
-        }
-    });
-
-    let struct_def = quote! {
-        #maybe_derive_attr
-        #orig_vis struct #partial_ident #generics #where_clause {
-            #(#partial_fields),*
-        }
-    };
+    let partial_struct_def = construct_partial_struct(
+        &partial_ident,
+        &orig_vis,
+        fields,
+        &generics,
+        where_clause,
+        Some(maybe_derive_attr),
+    );
 
     let merge_function_impl_block = construct_merge_impl_block(
         &partial_ident,
@@ -109,7 +93,7 @@ pub fn derive_partial(item: TokenStream) -> TokenStream {
     );
 
     let generated_code = quote! {
-        #struct_def
+        #partial_struct_def
         #merge_function_impl_block
     };
 
@@ -158,6 +142,44 @@ fn is_path_option(path: &Path) -> bool {
         last.ident == "Option" && matches!(last.arguments, PathArguments::AngleBracketed(_))
     } else {
         false
+    }
+}
+
+fn construct_partial_struct(
+    type_ident: &Ident,
+    type_vis: &Visibility,
+    fields_named: &FieldsNamed,
+    generics: &Generics,
+    where_clause: Option<&WhereClause>,
+    maybe_derive_attrs: Option<proc_macro2::TokenStream>,
+) -> proc_macro2::TokenStream {
+    let partial_fields = fields_named.named.iter().map(|f| {
+        let f_vis = &f.vis;
+        let f_ident = f
+            .ident
+            .as_ref()
+            .expect("Optifier: Named field must have ident");
+        let f_ty = &f.ty;
+        if is_option_type(f_ty) {
+            quote! {
+                #f_vis #f_ident: #f_ty
+            }
+        } else {
+            quote! {
+                #f_vis #f_ident: std::option::Option<#f_ty>
+            }
+        }
+    });
+
+    let partial_struct_def = quote! {
+        #maybe_derive_attrs
+        #type_vis struct #type_ident #generics #where_clause {
+            #(#partial_fields),*
+        }
+    };
+
+    quote! {
+        #partial_struct_def
     }
 }
 
