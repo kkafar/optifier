@@ -10,7 +10,7 @@
  Only structs with named fields are accepted; tuple and unit structs are not supported **yet**.
 
  Example:
- ```ignore
+ ```rust
  #[derive(Partial)]
  pub struct Foo {
      a: i32,
@@ -19,7 +19,7 @@
  }
  ```
  expands to:
- ```ignore
+ ```rust
  pub struct FooPartial {
      a: Option<i32>,
      b: Option<String>, // stays as-is
