@@ -11,7 +11,10 @@
 
  Example:
  ```rust
- #[derive(Partial)]
+ use optifier;
+
+ #[derive(optifier::Partial)]
+ #[optifier::partial_derive(Debug, Clone)]
  pub struct Foo {
      a: i32,
      b: Option<String>,
@@ -20,9 +23,44 @@
  ```
  expands to:
  ```rust
+ #[derive(Debug, Clone)]
  pub struct FooPartial {
      a: Option<i32>,
      b: Option<String>, // stays as-is
      pub c: Option<Vec<u8>>,
  }
  ```
+
+## `#[optifier::partial_derive(...)]` attribute
+
+The `#[optifier::partial_derive(...)]` attribute configures which traits are derived
+for the generated `*Partial` type.
+
+- It is applied to the original struct, together with `#[derive(optifier::Partial)]`.
+- It accepts a comma-separated list of trait paths (e.g. `Debug`, `Clone`, `PartialEq`,
+  or fully qualified paths).
+- Whatever traits you list there are emitted as a `#[derive(...)]` on the generated
+  `<OriginalName>Partial` type.
+
+Example:
+
+```rust
+use optifier;
+
+#[derive(optifier::Partial)]
+#[optifier::partial_derive(Debug, Clone, PartialEq)]
+pub struct Foo {
+    a: i32,
+    b: Option<String>,
+}
+```
+
+generates roughly:
+
+```rust
+#[derive(Debug, Clone, PartialEq)]
+pub struct FooPartial {
+    a: Option<i32>,
+    b: Option<String>,
+}
+```
