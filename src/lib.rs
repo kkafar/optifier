@@ -2,7 +2,7 @@
 //!
 //! Derive `Partial` on a struct `Foo` to generate a new struct named `FooPartial`
 //! where every field type is wrapped in `Option<T>` unless it is already an `Option<T>`.
-//! Only structs with named fields are accepted; tuple and unit structs are not supported.
+//! Only structs with named fields are accepted; tuple and unit structs are not supported **yet**.
 //!
 //! Example:
 //! ```ignore
@@ -27,7 +27,8 @@ extern crate proc_macro;
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    Data, DeriveInput, Ident, Path, PathArguments, Type, TypePath, Visibility, parse_macro_input
+    parse_macro_input, Data, DeriveInput, FieldsNamed, Ident, ImplGenerics, Path, PathArguments,
+    Type, TypeGenerics, TypePath, Visibility, WhereClause,
 };
 
 /// Derive macro to generate a `*Partial` variant of a struct with all fields wrapped in `Option`.
@@ -36,12 +37,13 @@ use syn::{
 /// - A new struct `<OriginalName>Partial` with the same visibility and field names, but with each
 ///   field type wrapped in `Option<T>`, unless it is already `Option<...>`.
 ///
-///! Supported:
-///! - Named-field structs
+/// Supported:
+/// - Named-field structs
 ///
-///! Not supported:
-///! - Tuple structs
-///! - Unit structs
+/// Not supported:
+/// - Tuple structs
+/// - Unit structs
+/// - Enums
 ///
 /// Notes:
 /// - Generic parameters and lifetimes are copied as-is to the generated `Partial` struct.
@@ -62,21 +64,23 @@ pub fn derive_partial(item: TokenStream) -> TokenStream {
 
     // Copy generics from original to partial
     let generics = input.generics.clone();
-    let (_impl_generics, _ty_generics, where_clause) = generics.split_for_impl();
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     // Currently we support only named fields inside a structure.
     // Support for tuple structs will be added in the future.
     //
     // Generate fields for the partial struct by wrapping types in Option if needed
 
-
     let syn::Fields::Named(fields) = &input_struct.fields else {
         panic!("Optifier supports only named fields");
     };
 
-   let partial_fields = fields.named.iter().map(|f| {
+    let partial_fields = fields.named.iter().map(|f| {
         let f_vis = &f.vis;
-        let f_ident = f.ident.as_ref().expect("Optifier: Named field must have ident");
+        let f_ident = f
+            .ident
+            .as_ref()
+            .expect("Optifier: Named field must have ident");
         let f_ty = &f.ty;
         if is_option_type(f_ty) {
             quote! {
@@ -91,13 +95,25 @@ pub fn derive_partial(item: TokenStream) -> TokenStream {
 
     let struct_def = quote! {
         #maybe_derive_attr
-        #orig_vis struct #partial_ident #generics {
+        #orig_vis struct #partial_ident #generics #where_clause {
             #(#partial_fields),*
         }
-        #where_clause;
     };
 
-    TokenStream::from(struct_def)
+    let merge_function_impl_block = construct_merge_impl_block(
+        &partial_ident,
+        fields,
+        &impl_generics,
+        &ty_generics,
+        where_clause,
+    );
+
+    let generated_code = quote! {
+        #struct_def
+        #merge_function_impl_block
+    };
+
+    TokenStream::from(generated_code)
 }
 
 fn deduce_derive_attr(input: &syn::DeriveInput) -> proc_macro2::TokenStream {
@@ -142,5 +158,38 @@ fn is_path_option(path: &Path) -> bool {
         last.ident == "Option" && matches!(last.arguments, PathArguments::AngleBracketed(_))
     } else {
         false
+    }
+}
+
+fn construct_merge_impl_block(
+    type_ident: &Ident,
+    fields_named: &FieldsNamed,
+    impl_generics: &ImplGenerics,
+    ty_generics: &TypeGenerics,
+    where_clause: Option<&WhereClause>,
+) -> proc_macro2::TokenStream {
+    let fields_merged = fields_named.named.iter().map(|f| {
+        let f_ident = f
+            .ident
+            .as_ref()
+            .expect("Optifier: Named field must have ident");
+
+        quote! {
+            #f_ident: self.#f_ident.or(other.#f_ident)
+        }
+    });
+
+    let merge_function_impl = quote! {
+        pub fn merge(self, other: #type_ident) -> Self {
+            Self {
+                #(#fields_merged),*
+            }
+        }
+    };
+
+    quote! {
+        impl #impl_generics #type_ident #ty_generics #where_clause {
+            #merge_function_impl
+        }
     }
 }
