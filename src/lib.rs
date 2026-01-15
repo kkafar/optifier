@@ -29,6 +29,7 @@
 
 extern crate proc_macro;
 
+use convert_case::{Case, Casing};
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
@@ -97,9 +98,22 @@ pub fn derive_partial(item: TokenStream) -> TokenStream {
         where_clause,
     );
 
+    let tryfrom_impl_block = construct_tryfrom_impl_block(
+        &orig_ident,
+        &partial_ident,
+        fields,
+        &impl_generics,
+        &ty_generics,
+        where_clause,
+    );
+
+    // FIXME: I've got no idea why adding a semicolon after #merge_function_impl_block
+    // fixes the compilation error, but it does. Seems to me that semicolon is not required
+    // after end of impl block. Need to investigate further.
     let generated_code = quote! {
         #partial_struct_def
         #merge_function_impl_block
+        #tryfrom_impl_block
     };
 
     TokenStream::from(generated_code)
@@ -193,7 +207,7 @@ fn construct_partial_struct(
             }
         } else {
             quote! {
-                #f_vis #f_ident: std::option::Option<#f_ty>
+                #f_vis #f_ident: ::std::option::Option<#f_ty>
             }
         }
     });
@@ -240,5 +254,103 @@ fn construct_merge_impl_block(
         impl #impl_generics #type_ident #ty_generics #where_clause {
             #merge_function_impl
         }
+    }
+}
+
+/// Construct the error type and `TryFrom<Partial> for Original` implementation.
+///
+/// - The error type is `<OriginalName>PartialError`.
+/// - It has one variant per non-`Option` field in the original struct.
+/// - Conversion succeeds only if all non-optional fields are present (`Some`) in the partial.
+fn construct_tryfrom_impl_block(
+    orig_ident: &Ident,
+    partial_ident: &Ident,
+    fields_named: &FieldsNamed,
+    impl_generics: &ImplGenerics,
+    ty_generics: &TypeGenerics,
+    where_clause: Option<&WhereClause>,
+) -> proc_macro2::TokenStream {
+    // Name of the error type: e.g. FooPartialError
+    let error_ident = format_ident!("{}Error", partial_ident);
+
+    // One enum variant per non-Option field, e.g. AMissing, FieldNameMissing, etc.
+    let error_variants = fields_named.named.iter().filter_map(|f| {
+        let f_ident = f
+            .ident
+            .as_ref()
+            .expect("Optifier: Named field must have ident");
+        let f_ty = &f.ty;
+
+        if is_option_type(f_ty) {
+            // Original field was already Option<...> → absence is allowed, no error variant
+            return None;
+        }
+
+        // Variant name: <FieldName>Missing, using PascalCase.
+        // Example: "a" -> "AMissing", "user_id" -> "UserIdMissing".
+        let f_name_str = f_ident.to_string();
+        let f_name_in_pascal_case = f_name_str.to_case(Case::Pascal);
+        let variant_name = format!("{}Missing", f_name_in_pascal_case);
+        let variant_ident = format_ident!("{}", variant_name);
+
+        Some(quote! {
+            #[error("Field `{}` is missing", #f_name_str)]
+            #variant_ident
+        })
+    });
+
+    // For constructing the original struct, we need, per field:
+    //
+    // - If original type was non-Option: self.field.ok_or(ErrorVariant)?
+    // - If original type was Option: self.field (already Option<T>)
+    let construct_fields = fields_named.named.iter().map(|f| {
+        let f_ident = f
+            .ident
+            .as_ref()
+            .expect("Optifier: Named field must have ident");
+        let f_ty = &f.ty;
+
+        if is_option_type(f_ty) {
+            // Accept the value as-is
+            quote! {
+                #f_ident: partial.#f_ident
+            }
+        } else {
+            // Reconstruct the variant name in the same way (PascalCase + "Missing")
+            let raw_name = f_ident.to_string();
+            let pascal = raw_name.to_case(Case::Pascal);
+            let variant_name = format!("{}Missing", pascal);
+            let variant_ident = format_ident!("{}", variant_name);
+
+            quote! {
+                #f_ident: partial.#f_ident.ok_or(#error_ident::#variant_ident)?
+            }
+        }
+    });
+
+    // We require thiserror; users must have it in their Cargo.toml.
+    // We fully qualify the path so they don't need to `use` it in their own module.
+    let error_def = quote! {
+        #[derive(::thiserror::Error, Debug)]
+        pub enum #error_ident {
+            #(#error_variants),*
+        }
+    };
+
+    let try_from_impl = quote! {
+        impl #impl_generics ::std::convert::TryFrom<#partial_ident #ty_generics> for #orig_ident #ty_generics #where_clause {
+            type Error = #error_ident;
+
+            fn try_from(partial: #partial_ident #ty_generics) -> ::std::result::Result<#orig_ident #ty_generics, Self::Error> {
+                Ok(#orig_ident {
+                    #(#construct_fields),*
+                })
+            }
+        }
+    };
+
+    quote! {
+        #error_def
+        #try_from_impl
     }
 }
