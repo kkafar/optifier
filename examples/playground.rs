@@ -1,6 +1,6 @@
-use optifier::{self, partial_derive};
+use optifier::{Partial, partial_derive};
 
-#[derive(optifier::Partial)]
+#[derive(Partial, Debug)]
 #[partial_derive(Debug)]
 struct TestType {
     field_i32: i32,
@@ -16,7 +16,7 @@ fn main() -> Result<(), ()> {
     };
     let partial = TestTypePartial {
         field_i32: None,
-        field_string: Some(String::from("hello world")),
+        field_string: None,
         field_option_string: None,
     };
     let second_partial = TestTypePartial {
@@ -26,6 +26,22 @@ fn main() -> Result<(), ()> {
     };
     let merged = TestTypePartial::merge(partial, second_partial);
 
-    dbg!(merged);
+    dbg!(&merged);
+    let config_result: Result<TestType, TestTypePartialError> = merged.try_into();
+
+    let config = match config_result {
+        Ok(config) => config,
+        Err(err) => match err {
+            TestTypePartialError::FieldI32Missing => {
+                panic!("Field 'field_i32' is missing");
+            }
+            TestTypePartialError::FieldStringMissing => {
+                panic!("Field 'field_string' is missing");
+            }
+        },
+    };
+
+    let _ = dbg!(config);
+
     return Ok(());
 }
